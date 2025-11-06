@@ -305,6 +305,123 @@ def get_modern_stylesheet() -> str:
     """
 
 
+# ============================================================================
+# Worker Threads for Long-Running Operations
+# ============================================================================
+
+class RefreshModpacksWorker(QtCore.QThread):
+    """Worker thread for refreshing the modpack list."""
+    
+    finished = QtCore.pyqtSignal(list)  # list of ModpackInfo
+    error = QtCore.pyqtSignal(str)
+    
+    def __init__(self, engine: SyncEngine, parent=None):
+        super().__init__(parent)
+        self.engine = engine
+    
+    def run(self):
+        try:
+            modpacks = self.engine.list_modpacks()
+            self.finished.emit(modpacks)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class PreviewWorker(QtCore.QThread):
+    """Worker thread for building a sync plan."""
+    
+    finished = QtCore.pyqtSignal(object, dict)  # SyncPlan, snapshot_payload
+    error = QtCore.pyqtSignal(str)
+    
+    def __init__(self, engine: SyncEngine, modpack: ModpackInfo, parent=None):
+        super().__init__(parent)
+        self.engine = engine
+        self.modpack = modpack
+    
+    def run(self):
+        try:
+            plan, snapshot_payload, *_ = self.engine.create_sync_plan(self.modpack)
+            self.finished.emit(plan, snapshot_payload)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class SyncWorker(QtCore.QThread):
+    """Worker thread for executing a sync plan."""
+    
+    finished = QtCore.pyqtSignal()
+    error = QtCore.pyqtSignal(str)
+    progress = QtCore.pyqtSignal(str, int, int)  # message, current, total
+    confirm_update_signal = QtCore.pyqtSignal(object)  # FileChange
+    confirm_removal_signal = QtCore.pyqtSignal(object)  # FileChange
+    
+    def __init__(
+        self,
+        engine: SyncEngine,
+        modpack: ModpackInfo,
+        plan: SyncPlan,
+        snapshot_payload: dict,
+        create_backups: bool,
+        parent=None
+    ):
+        super().__init__(parent)
+        self.engine = engine
+        self.modpack = modpack
+        self.plan = plan
+        self.snapshot_payload = snapshot_payload
+        self.create_backups = create_backups
+        self.confirmation_responses = {}
+        self._mutex = QtCore.QMutex()
+        self._wait_condition = QtCore.QWaitCondition()
+    
+    def confirm_update(self, change: FileChange) -> bool:
+        """Called from worker thread, signals GUI thread for confirmation."""
+        key = id(change)
+        self.confirm_update_signal.emit(change)
+        
+        # Wait for response from GUI thread
+        self._mutex.lock()
+        self._wait_condition.wait(self._mutex)
+        result = self.confirmation_responses.get(key, False)
+        self._mutex.unlock()
+        return result
+    
+    def confirm_removal(self, change: FileChange) -> bool:
+        """Called from worker thread, signals GUI thread for confirmation."""
+        key = id(change)
+        self.confirm_removal_signal.emit(change)
+        
+        # Wait for response from GUI thread
+        self._mutex.lock()
+        self._wait_condition.wait(self._mutex)
+        result = self.confirmation_responses.get(key, False)
+        self._mutex.unlock()
+        return result
+    
+    def set_confirmation_response(self, change: FileChange, response: bool):
+        """Called from GUI thread to provide confirmation response."""
+        key = id(change)
+        self._mutex.lock()
+        self.confirmation_responses[key] = response
+        self._wait_condition.wakeAll()
+        self._mutex.unlock()
+    
+    def run(self):
+        try:
+            self.engine.execute_plan(
+                modpack=self.modpack,
+                plan=self.plan,
+                snapshot_payload=self.snapshot_payload,
+                create_backups=self.create_backups,
+                confirm_update=self.confirm_update,
+                confirm_removal=self.confirm_removal,
+                progress_callback=lambda msg, cur, tot: self.progress.emit(msg, cur, tot),
+            )
+            self.finished.emit()
+        except Exception as e:
+            self.error.emit(str(e))
+
+
 class MainWindow(QtWidgets.QMainWindow):
     """Primary application window."""
 
@@ -323,6 +440,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.selected_modpack: Optional[ModpackInfo] = None
         self.current_plan: Optional[SyncPlan] = None
         self.current_snapshot_payload: Optional[dict] = None
+        
+        # Worker thread references
+        self.refresh_worker: Optional[RefreshModpacksWorker] = None
+        self.preview_worker: Optional[PreviewWorker] = None
+        self.sync_worker: Optional[SyncWorker] = None
 
         self._setup_ui()
         self._apply_modern_styling()
@@ -641,10 +763,36 @@ class MainWindow(QtWidgets.QMainWindow):
         self.append_log(f"📁 Updated game path: {game_path}")
         self._refresh_modpacks()
 
+    # ----------------------------------------------------------------- REFRESH MODPACKS
     def _refresh_modpacks(self) -> None:
+        """Start background thread to refresh modpack list."""
+        # Prevent multiple simultaneous refresh operations
+        if self.refresh_worker and self.refresh_worker.isRunning():
+            self.append_log("⚠️ Refresh already in progress")
+            return
+        
         self.modpack_list.clear()
         self.append_log("🔄 Refreshing modpack list...")
-        self.modpacks = self.engine.list_modpacks()
+        self._set_status("🔄 Scanning for modpacks...")
+        
+        # Disable buttons during refresh
+        self.refresh_modpacks_btn.setEnabled(False)
+        self.preview_btn.setEnabled(False)
+        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
+        
+        # Create and start worker thread
+        self.refresh_worker = RefreshModpacksWorker(self.engine, self)
+        self.refresh_worker.finished.connect(self._on_refresh_finished)
+        self.refresh_worker.error.connect(self._on_refresh_error)
+        self.refresh_worker.start()
+
+    def _on_refresh_finished(self, modpacks: list[ModpackInfo]) -> None:
+        """Handle completion of modpack refresh."""
+        QtWidgets.QApplication.restoreOverrideCursor()
+        self.refresh_modpacks_btn.setEnabled(True)
+        self.preview_btn.setEnabled(True)
+        
+        self.modpacks = modpacks
         
         for modpack in self.modpacks:
             item = QtWidgets.QListWidgetItem(f"📦 {modpack.name}")
@@ -653,12 +801,28 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.modpacks:
             self.modpack_list.setCurrentRow(0)
             self.append_log(f"✅ Found {len(self.modpacks)} modpack(s)")
+            self._set_status(f"✅ Found {len(self.modpacks)} modpack(s)")
         else:
             self.modpack_details_label.setText("ℹ️ No modpacks detected. Check your CurseForge instances path.")
             self.preview_tree.clear()
             self.sync_btn.setEnabled(False)
             self.exclude_btn.setEnabled(False)
             self.append_log("⚠️ No modpacks found in the specified directory")
+            self._set_status("⚠️ No modpacks found", is_error=True)
+
+    def _on_refresh_error(self, error_msg: str) -> None:
+        """Handle error during modpack refresh."""
+        QtWidgets.QApplication.restoreOverrideCursor()
+        self.refresh_modpacks_btn.setEnabled(True)
+        self.preview_btn.setEnabled(True)
+        
+        self.append_log(f"❌ Refresh failed: {error_msg}")
+        self._set_status("Refresh failed", is_error=True)
+        QtWidgets.QMessageBox.critical(
+            self,
+            "Refresh Error",
+            f"Failed to refresh modpacks:\n{error_msg}"
+        )
 
     def _on_modpack_selected(self, index: int) -> None:
         if index < 0 or index >= len(self.modpacks):
@@ -684,7 +848,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.exclude_btn.setEnabled(False)
         self.append_log(f"📦 Selected modpack: {self.selected_modpack.name}")
 
+    # ----------------------------------------------------------------- PREVIEW
     def _preview_selected_modpack(self) -> None:
+        """Start background thread to build sync plan."""
         if not self.selected_modpack:
             QtWidgets.QMessageBox.warning(
                 self,
@@ -692,41 +858,63 @@ class MainWindow(QtWidgets.QMainWindow):
                 "Please select a modpack first."
             )
             return
+        
+        # Prevent multiple simultaneous preview operations
+        if self.preview_worker and self.preview_worker.isRunning():
+            self.append_log("⚠️ Preview already in progress")
+            return
 
         self._set_status("🔍 Building sync plan...")
         self.append_log(f"🔍 Analyzing changes for {self.selected_modpack.name}...")
+        
+        # Disable buttons during preview
+        self.preview_btn.setEnabled(False)
+        self.sync_btn.setEnabled(False)
+        self.exclude_btn.setEnabled(False)
         QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
         
-        try:
-            plan, snapshot_payload, *_ = self.engine.create_sync_plan(self.selected_modpack)
-            self.current_plan = plan
-            self.current_snapshot_payload = snapshot_payload
-            self._populate_preview(plan)
-            self.sync_btn.setEnabled(True and not plan.is_empty())
-            self.exclude_btn.setEnabled(False)
-            
-            if plan.is_empty():
-                self._set_status("✅ Everything is already in sync")
-                self.append_log("✅ No changes needed - everything is up to date")
-                QtWidgets.QMessageBox.information(
-                    self,
-                    "Sync Status",
-                    "Everything is already in sync! No changes needed."
-                )
-            else:
-                total_changes = len(plan.adds) + len(plan.updates) + len(plan.removals)
-                self._set_status(f"✅ Preview ready - {total_changes} change(s) detected")
-                self.append_log(f"📊 Found {len(plan.adds)} additions, {len(plan.updates)} updates, {len(plan.removals)} removals")
-        except Exception as e:
-            self._set_status(f"Error building sync plan", is_error=True)
-            self.append_log(f"❌ Error: {str(e)}")
-            QtWidgets.QMessageBox.critical(
+        # Create and start worker thread
+        self.preview_worker = PreviewWorker(self.engine, self.selected_modpack, self)
+        self.preview_worker.finished.connect(self._on_preview_finished)
+        self.preview_worker.error.connect(self._on_preview_error)
+        self.preview_worker.start()
+
+    def _on_preview_finished(self, plan: SyncPlan, snapshot_payload: dict) -> None:
+        """Handle completion of sync plan building."""
+        QtWidgets.QApplication.restoreOverrideCursor()
+        self.preview_btn.setEnabled(True)
+        
+        self.current_plan = plan
+        self.current_snapshot_payload = snapshot_payload
+        self._populate_preview(plan)
+        self.sync_btn.setEnabled(True and not plan.is_empty())
+        self.exclude_btn.setEnabled(False)
+        
+        if plan.is_empty():
+            self._set_status("✅ Everything is already in sync")
+            self.append_log("✅ No changes needed - everything is up to date")
+            QtWidgets.QMessageBox.information(
                 self,
-                "Error",
-                f"Failed to build sync plan:\n{str(e)}"
+                "Sync Status",
+                "Everything is already in sync! No changes needed."
             )
-        finally:
-            QtWidgets.QApplication.restoreOverrideCursor()
+        else:
+            total_changes = len(plan.adds) + len(plan.updates) + len(plan.removals)
+            self._set_status(f"✅ Preview ready - {total_changes} change(s) detected")
+            self.append_log(f"📊 Found {len(plan.adds)} additions, {len(plan.updates)} updates, {len(plan.removals)} removals")
+
+    def _on_preview_error(self, error_msg: str) -> None:
+        """Handle error during sync plan building."""
+        QtWidgets.QApplication.restoreOverrideCursor()
+        self.preview_btn.setEnabled(True)
+        
+        self._set_status(f"Error building sync plan", is_error=True)
+        self.append_log(f"❌ Error: {error_msg}")
+        QtWidgets.QMessageBox.critical(
+            self,
+            "Error",
+            f"Failed to build sync plan:\n{error_msg}"
+        )
 
     def _populate_preview(self, plan: SyncPlan) -> None:
         self.preview_tree.clear()
@@ -799,7 +987,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self.append_log(f"🚫 Excluded: {change.relative_path}")
             self._preview_selected_modpack()
 
+    # ----------------------------------------------------------------- SYNC
     def _sync_selected_modpack(self) -> None:
+        """Start background thread to execute sync plan."""
         if not self.selected_modpack or not self.current_plan or not self.current_snapshot_payload:
             return
 
@@ -809,6 +999,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 "Sync Status", 
                 "Everything is already in sync."
             )
+            return
+        
+        # Prevent multiple simultaneous sync operations
+        if self.sync_worker and self.sync_worker.isRunning():
+            self.append_log("⚠️ Sync already in progress")
             return
 
         total_changes = len(self.current_plan.adds) + len(self.current_plan.updates) + len(self.current_plan.removals)
@@ -833,63 +1028,91 @@ class MainWindow(QtWidgets.QMainWindow):
         self.progress_bar.setMaximum(max(total_changes, 1))
         self.progress_bar.setValue(0)
         self._set_status("🔄 Sync in progress...")
+        
+        # Disable buttons during sync
+        self.preview_btn.setEnabled(False)
+        self.sync_btn.setEnabled(False)
+        self.exclude_btn.setEnabled(False)
+        self.refresh_modpacks_btn.setEnabled(False)
         QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
 
-        def progress_handler(message: str, current: int, total: int) -> None:
-            self.progress_bar.setMaximum(max(total, 1))
-            self.progress_bar.setValue(current)
-            self._set_status(f"🔄 {message}")
-            QtWidgets.QApplication.processEvents()
+        # Create and start worker thread
+        self.sync_worker = SyncWorker(
+            self.engine,
+            self.selected_modpack,
+            self.current_plan,
+            self.current_snapshot_payload,
+            self.backup_checkbox.isChecked(),
+            self
+        )
+        self.sync_worker.finished.connect(self._on_sync_finished)
+        self.sync_worker.error.connect(self._on_sync_error)
+        self.sync_worker.progress.connect(self._on_sync_progress)
+        self.sync_worker.confirm_update_signal.connect(self._handle_confirm_update)
+        self.sync_worker.confirm_removal_signal.connect(self._handle_confirm_removal)
+        self.sync_worker.start()
 
-        def confirm_update(change: FileChange) -> bool:
-            result = QtWidgets.QMessageBox.question(
-                self,
-                "Confirm Update",
-                f"Replace existing file?\n\n<b>{change.relative_path}</b>",
-                QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
-            )
-            return result == QtWidgets.QMessageBox.StandardButton.Yes
+    def _on_sync_progress(self, message: str, current: int, total: int) -> None:
+        """Handle progress updates from sync worker."""
+        self.progress_bar.setMaximum(max(total, 1))
+        self.progress_bar.setValue(current)
+        self._set_status(f"🔄 {message}")
 
-        def confirm_removal(change: FileChange) -> bool:
-            result = QtWidgets.QMessageBox.question(
-                self,
-                "Confirm Removal",
-                f"Delete file removed from modpack?\n\n<b>{change.relative_path}</b>",
-                QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
-            )
-            return result == QtWidgets.QMessageBox.StandardButton.Yes
+    def _handle_confirm_update(self, change: FileChange) -> None:
+        """Handle confirmation request from sync worker for file update."""
+        result = QtWidgets.QMessageBox.question(
+            self,
+            "Confirm Update",
+            f"Replace existing file?\n\n<b>{change.relative_path}</b>",
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+        )
+        response = (result == QtWidgets.QMessageBox.StandardButton.Yes)
+        self.sync_worker.set_confirmation_response(change, response)
 
-        try:
-            self.engine.execute_plan(
-                modpack=self.selected_modpack,
-                plan=self.current_plan,
-                snapshot_payload=self.current_snapshot_payload,
-                create_backups=self.backup_checkbox.isChecked(),
-                confirm_update=confirm_update,
-                confirm_removal=confirm_removal,
-                progress_callback=progress_handler,
-            )
-            self._set_status("✅ Sync completed successfully")
-            self.append_log(f"✅ Sync completed for {self.selected_modpack.name}")
-            self.progress_bar.setValue(self.progress_bar.maximum())
-            
-            QtWidgets.QMessageBox.information(
-                self, 
-                "Sync Complete", 
-                f"<b>Synchronization complete!</b><br><br>"
-                f"Your modpack has been successfully synced."
-            )
-        except Exception as exc:
-            self._set_status("Sync failed", is_error=True)
-            self.append_log(f"❌ Sync failed: {str(exc)}")
-            QtWidgets.QMessageBox.critical(
-                self, 
-                "Sync Failed", 
-                f"<b>Synchronization failed:</b><br><br>{str(exc)}"
-            )
-        finally:
-            QtWidgets.QApplication.restoreOverrideCursor()
-            self._preview_selected_modpack()
+    def _handle_confirm_removal(self, change: FileChange) -> None:
+        """Handle confirmation request from sync worker for file removal."""
+        result = QtWidgets.QMessageBox.question(
+            self,
+            "Confirm Removal",
+            f"Delete file removed from modpack?\n\n<b>{change.relative_path}</b>",
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+        )
+        response = (result == QtWidgets.QMessageBox.StandardButton.Yes)
+        self.sync_worker.set_confirmation_response(change, response)
+
+    def _on_sync_finished(self) -> None:
+        """Handle completion of sync operation."""
+        QtWidgets.QApplication.restoreOverrideCursor()
+        self.preview_btn.setEnabled(True)
+        self.refresh_modpacks_btn.setEnabled(True)
+        
+        self._set_status("✅ Sync completed successfully")
+        self.append_log(f"✅ Sync completed for {self.selected_modpack.name}")
+        self.progress_bar.setValue(self.progress_bar.maximum())
+        
+        QtWidgets.QMessageBox.information(
+            self, 
+            "Sync Complete", 
+            f"<b>Synchronization complete!</b><br><br>"
+            f"Your modpack has been successfully synced."
+        )
+        
+        # Refresh the preview to show updated state
+        self._preview_selected_modpack()
+
+    def _on_sync_error(self, error_msg: str) -> None:
+        """Handle error during sync operation."""
+        QtWidgets.QApplication.restoreOverrideCursor()
+        self.preview_btn.setEnabled(True)
+        self.refresh_modpacks_btn.setEnabled(True)
+        
+        self._set_status("Sync failed", is_error=True)
+        self.append_log(f"❌ Sync failed: {error_msg}")
+        QtWidgets.QMessageBox.critical(
+            self, 
+            "Sync Failed", 
+            f"<b>Synchronization failed:</b><br><br>{error_msg}"
+        )
 
 
 def create_main_window() -> MainWindow:
