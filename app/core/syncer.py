@@ -65,6 +65,10 @@ class SyncEngine:
         """Apply a sync plan with optional confirmation callbacks."""
 
         target_path = self.config.game_path
+        
+        # Validate target path exists
+        if not target_path.exists():
+            raise ValueError(f"Target game path does not exist: {target_path}")
         backup_root = self.config.backup_dir if create_backups else None
 
         total_items = len(plan.adds) + len(plan.updates) + len(plan.removals)

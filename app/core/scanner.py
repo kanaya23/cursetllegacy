@@ -93,6 +93,10 @@ def build_sync_plan(
 
     Returns the plan, the new snapshot payload, and the raw source/target snapshots.
     """
+    
+    # Validate inputs
+    if not modpack.path.exists():
+        raise ValueError(f"Modpack path does not exist: {modpack.path}")
 
     plan = SyncPlan()
     history = history_store.get_history(modpack.name)
