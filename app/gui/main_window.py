@@ -14,18 +14,18 @@ from ..core.syncer import SyncEngine
 
 # Modern color scheme
 COLORS = {
-    "primary": "#2196F3",           # Blue
-    "primary_dark": "#1976D2",      # Darker blue
-    "primary_light": "#BBDEFB",     # Light blue
-    "success": "#4CAF50",           # Green
-    "warning": "#FF9800",           # Orange
-    "danger": "#F44336",            # Red
-    "background": "#F5F5F5",        # Light gray
-    "surface": "#FFFFFF",           # White
-    "text_primary": "#212121",      # Dark gray
-    "text_secondary": "#757575",    # Medium gray
-    "border": "#E0E0E0",            # Light border
-    "hover": "#E3F2FD",             # Light blue hover
+    "primary": "#42A5F5",          # Mid blue accent
+    "primary_dark": "#1E88E5",     # Darker blue accent
+    "primary_light": "#64B5F6",    # Lighter blue accent
+    "success": "#66BB6A",          # Green accent
+    "warning": "#FFA726",          # Amber accent
+    "danger": "#EF5350",           # Red accent
+    "background": "#121212",       # App background
+    "surface": "#1E1E1E",          # Surface panels
+    "text_primary": "#E0E0E0",     # Light gray text
+    "text_secondary": "#B0BEC5",   # Muted text
+    "border": "#2D2D2D",           # Subtle border
+    "hover": "#1F2A33",            # Hover highlight
 }
 
 
@@ -34,169 +34,171 @@ def get_modern_stylesheet() -> str:
     return f"""
         QMainWindow {{
             background-color: {COLORS['background']};
+            color: {COLORS['text_primary']};
         }}
-        
-        /* Group boxes */
+
+        QWidget {{
+            color: {COLORS['text_primary']};
+        }}
+
         QGroupBox {{
             font-weight: bold;
             font-size: 13px;
             color: {COLORS['text_primary']};
-            border: 2px solid {COLORS['border']};
-            border-radius: 8px;
+            border: 1px solid {COLORS['border']};
+            border-radius: 10px;
             margin-top: 12px;
             padding-top: 12px;
             background-color: {COLORS['surface']};
         }}
-        
+
         QGroupBox::title {{
             subcontrol-origin: margin;
             subcontrol-position: top left;
             left: 12px;
             padding: 0 5px;
-            color: {COLORS['primary']};
+            color: {COLORS['primary_light']};
         }}
-        
-        /* Buttons */
+
         QPushButton {{
             background-color: {COLORS['primary']};
-            color: white;
-            border: none;
+            color: #ffffff;
+            border: 1px solid transparent;
             border-radius: 6px;
             padding: 10px 20px;
             font-size: 12px;
             font-weight: 500;
             min-height: 20px;
         }}
-        
+
         QPushButton:hover {{
             background-color: {COLORS['primary_dark']};
         }}
-        
+
         QPushButton:pressed {{
             background-color: {COLORS['primary_dark']};
             padding-top: 12px;
             padding-bottom: 8px;
         }}
-        
+
         QPushButton:disabled {{
             background-color: {COLORS['border']};
             color: {COLORS['text_secondary']};
         }}
-        
-        /* Special button colors */
+
         QPushButton#syncButton {{
             background-color: {COLORS['success']};
+            color: #0B130C;
         }}
-        
+
         QPushButton#syncButton:hover {{
-            background-color: #45a049;
+            background-color: #57A75F;
         }}
-        
+
         QPushButton#excludeButton {{
             background-color: {COLORS['warning']};
+            color: #23170A;
         }}
-        
+
         QPushButton#excludeButton:hover {{
-            background-color: #e68900;
+            background-color: #F18F1C;
         }}
-        
+
         QPushButton#refreshButton {{
             background-color: {COLORS['primary']};
         }}
-        
-        /* Line edits */
+
         QLineEdit {{
-            border: 2px solid {COLORS['border']};
+            border: 1px solid {COLORS['border']};
             border-radius: 6px;
             padding: 8px 12px;
-            background-color: {COLORS['surface']};
+            background-color: #181818;
             font-size: 12px;
             color: {COLORS['text_primary']};
+            selection-background-color: {COLORS['primary_dark']};
+            selection-color: #ffffff;
         }}
-        
+
         QLineEdit:focus {{
             border-color: {COLORS['primary']};
         }}
-        
-        /* List widget */
+
         QListWidget {{
-            border: 2px solid {COLORS['border']};
+            border: 1px solid {COLORS['border']};
             border-radius: 8px;
             background-color: {COLORS['surface']};
             padding: 8px;
             font-size: 12px;
+            alternate-background-color: #181818;
         }}
-        
+
         QListWidget::item {{
             border-radius: 4px;
             padding: 10px;
             margin: 2px;
         }}
-        
+
         QListWidget::item:selected {{
-            background-color: {COLORS['primary']};
-            color: white;
+            background-color: {COLORS['primary_dark']};
+            color: #ffffff;
         }}
-        
+
         QListWidget::item:hover {{
             background-color: {COLORS['hover']};
         }}
-        
-        /* Tree widget */
+
         QTreeWidget {{
-            border: 2px solid {COLORS['border']};
+            border: 1px solid {COLORS['border']};
             border-radius: 8px;
             background-color: {COLORS['surface']};
-            alternate-background-color: #FAFAFA;
+            alternate-background-color: #181818;
             font-size: 12px;
         }}
-        
+
         QTreeWidget::item {{
             padding: 6px;
             border-radius: 4px;
         }}
-        
+
         QTreeWidget::item:selected {{
-            background-color: {COLORS['primary_light']};
+            background-color: {COLORS['primary_dark']};
             color: {COLORS['text_primary']};
         }}
-        
+
         QTreeWidget::item:hover {{
             background-color: {COLORS['hover']};
         }}
-        
+
         QHeaderView::section {{
-            background-color: {COLORS['primary']};
-            color: white;
+            background-color: {COLORS['primary_dark']};
+            color: #ffffff;
             padding: 8px;
             border: none;
             font-weight: bold;
             font-size: 12px;
         }}
-        
+
         QHeaderView::section:first {{
             border-top-left-radius: 8px;
         }}
-        
+
         QHeaderView::section:last {{
             border-top-right-radius: 8px;
         }}
-        
-        /* Text edit / Log output */
+
         QPlainTextEdit {{
-            border: 2px solid {COLORS['border']};
+            border: 1px solid {COLORS['border']};
             border-radius: 8px;
-            background-color: #263238;
-            color: #B0BEC5;
+            background-color: #0F1720;
+            color: #C5CED9;
             padding: 10px;
             font-family: 'Consolas', 'Monaco', monospace;
             font-size: 11px;
             line-height: 1.5;
         }}
-        
-        /* Progress bar */
+
         QProgressBar {{
-            border: 2px solid {COLORS['border']};
+            border: 1px solid {COLORS['border']};
             border-radius: 6px;
             text-align: center;
             background-color: {COLORS['surface']};
@@ -204,111 +206,99 @@ def get_modern_stylesheet() -> str:
             font-weight: 500;
             font-size: 11px;
         }}
-        
+
         QProgressBar::chunk {{
             background-color: {COLORS['success']};
             border-radius: 4px;
         }}
-        
-        /* Checkboxes */
+
         QCheckBox {{
             font-size: 12px;
             color: {COLORS['text_primary']};
             spacing: 8px;
         }}
-        
+
         QCheckBox::indicator {{
-            width: 20px;
-            height: 20px;
-            border: 2px solid {COLORS['border']};
+            width: 18px;
+            height: 18px;
+            border: 1px solid {COLORS['border']};
             border-radius: 4px;
             background-color: {COLORS['surface']};
         }}
-        
+
         QCheckBox::indicator:checked {{
             background-color: {COLORS['primary']};
             border-color: {COLORS['primary']};
-            image: url(none);
         }}
-        
-        QCheckBox::indicator:checked::after {{
-            content: "✓";
-            color: white;
-        }}
-        
-        /* Labels */
+
         QLabel {{
             color: {COLORS['text_primary']};
             font-size: 12px;
         }}
-        
-        /* Status bar */
+
         QStatusBar {{
             background-color: {COLORS['surface']};
             color: {COLORS['text_secondary']};
             border-top: 1px solid {COLORS['border']};
             font-size: 11px;
         }}
-        
-        /* Tooltips */
+
         QToolTip {{
-            background-color: {COLORS['text_primary']};
-            color: white;
-            border: none;
+            background-color: #2A2F37;
+            color: {COLORS['text_primary']};
+            border: 1px solid {COLORS['border']};
             border-radius: 4px;
             padding: 5px;
             font-size: 11px;
         }}
-        
-        /* Splitter */
+
         QSplitter::handle {{
             background-color: {COLORS['border']};
             width: 2px;
         }}
-        
+
         QSplitter::handle:hover {{
             background-color: {COLORS['primary']};
         }}
-        
-        /* Scrollbar */
+
         QScrollBar:vertical {{
             border: none;
             background-color: {COLORS['background']};
-            width: 12px;
-            border-radius: 6px;
+            width: 14px;
+            border-radius: 7px;
         }}
-        
+
         QScrollBar::handle:vertical {{
-            background-color: {COLORS['text_secondary']};
-            border-radius: 6px;
+            background-color: {COLORS['border']};
+            border-radius: 7px;
             min-height: 30px;
         }}
-        
+
         QScrollBar::handle:vertical:hover {{
             background-color: {COLORS['primary']};
         }}
-        
+
         QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
             height: 0px;
         }}
-        
+
         QScrollBar:horizontal {{
             border: none;
             background-color: {COLORS['background']};
-            height: 12px;
-            border-radius: 6px;
+            height: 14px;
+            border-radius: 7px;
         }}
-        
+
         QScrollBar::handle:horizontal {{
-            background-color: {COLORS['text_secondary']};
-            border-radius: 6px;
+            background-color: {COLORS['border']};
+            border-radius: 7px;
             min-width: 30px;
         }}
-        
+
         QScrollBar::handle:horizontal:hover {{
             background-color: {COLORS['primary']};
         }}
-        
+
         QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
             width: 0px;
         }}
@@ -394,10 +384,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.save_paths_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: {COLORS['success']};
+                color: #0D1B0E;
                 font-weight: 600;
             }}
             QPushButton:hover {{
-                background-color: #45a049;
+                background-color: #57A75F;
             }}
         """)
         self.save_paths_btn.clicked.connect(self._save_paths)
@@ -441,7 +432,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.modpack_details_label = QtWidgets.QLabel("", modpack_group)
         self.modpack_details_label.setWordWrap(True)
         self.modpack_details_label.setStyleSheet(f"""
-            background-color: {COLORS['background']};
+            background-color: {COLORS['surface']};
             border: 1px solid {COLORS['border']};
             border-radius: 6px;
             padding: 10px;
