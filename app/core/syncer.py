@@ -42,7 +42,14 @@ class SyncEngine:
 
     # Discovery -----------------------------------------------------------------
     def list_modpacks(self) -> list[ModpackInfo]:
-        return discover_modpacks(self.config.instances_path)
+        instances_path = self.config.instances_path
+        if not instances_path.exists():
+            self._log(
+                f"Instances path does not exist yet: {instances_path}. "
+                "Create it or update the configuration to scan for modpacks."
+            )
+            return []
+        return discover_modpacks(instances_path)
 
     # Planning -------------------------------------------------------------------
     def create_sync_plan(self, modpack: ModpackInfo) -> tuple[SyncPlan, dict, dict, dict]:
@@ -65,10 +72,18 @@ class SyncEngine:
         """Apply a sync plan with optional confirmation callbacks."""
 
         target_path = self.config.game_path
-        
-        # Validate target path exists
+
+        # Validate target path exists or create it automatically
         if not target_path.exists():
-            raise ValueError(f"Target game path does not exist: {target_path}")
+            try:
+                target_path.mkdir(parents=True, exist_ok=True)
+                self._log(f"Created missing game directory: {target_path}")
+            except OSError as exc:
+                raise ValueError(
+                    f"Target game path does not exist and could not be created: {target_path}"
+                ) from exc
+        elif not target_path.is_dir():
+            raise ValueError(f"Target game path is not a directory: {target_path}")
         backup_root = self.config.backup_dir if create_backups else None
 
         total_items = len(plan.adds) + len(plan.updates) + len(plan.removals)
